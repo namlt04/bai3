@@ -1,0 +1,50 @@
+﻿<HTML>
+<HEAD>
+    <style>
+        body {
+            background-color: white;
+            font-family: "MS Shell Dlg";
+        }
+
+        .file, .folder {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin-bottom: 10px;
+        }
+
+        button {
+            font-size: 16px;
+            height: 32px; /* Chiều cao cố định */
+            padding: 0 10px; /* Padding ngang */
+        }
+
+        label {
+            font-size: 16px; /* Bằng với button */
+            line-height: 32px; /* Cho chiều cao chữ = chiều cao button */
+        }
+
+        input {
+            font-size: 16px;
+            height: 32px;
+        }
+    </style>
+</HEAD>
+<BODY ID=CMFCApplication1Dlg BGCOLOR=white style="font-family:MS Shell Dlg;font-size:8">
+
+    <input type="text" id="inputName" /> <br/>
+
+    
+    <div class="file">
+        <button id="fileButton">Chọn File</button>
+        <input type="text" id="inputFile"/> ;
+    </div>
+   
+    <div class="folder">
+        <button id="folderButton">Chọn Folder</button>
+        <input type="text" id="inputFolder"/> ;
+    </div>
+    <button id="createButton">create</button>
+    
+</BODY>
+</HTML>
