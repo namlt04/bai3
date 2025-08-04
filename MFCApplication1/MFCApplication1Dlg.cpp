@@ -174,7 +174,7 @@ HRESULT CMFCApplication1Dlg::OnFileButton(IHTMLElement* /*pElement*/)
 		spDoc3->getElementById(CComBSTR(L"inputFile"), &spElem);
 
 		CComQIPtr<IHTMLInputTextElement> spInput = spElem;
-		spInput->put_value(::SysAllocString(path));
+		spInput->put_value(CComBSTR(path));
 		
 	}
 	return S_OK;

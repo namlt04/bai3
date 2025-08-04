@@ -9,7 +9,7 @@
 int main()
 {
     // Đường dẫn đầy đủ tới ảnh nền (nên dùng ảnh .bmp để tương thích tốt)
-    LPCTSTR imagePath = _T("C:\\Users\\admin\\Downloads\\pexels-suissounet-2101187.jpg");
+    LPCTSTR imagePath = _T("C:\Users\admin\Downloads\pexels-suissounet-2101187.jpg");
 
     // Gọi hàm thay đổi ảnh nền
     BOOL result = SystemParametersInfo(

@@ -7,13 +7,21 @@
 #include <stdio.h>
 #include <time.h>
 #include <atlstr.h>
-#define SERVICE_NAME _T("myservice")
+#include <sddl.h>
+#include <Wtsapi32.h>      // WTSQueryUserToken
+#include <Userenv.h>       // CreateEnvironmentBlock (nếu cần)
+#include <Securitybaseapi.h> // DuplicateTokenEx
+#define SERVICE_NAME L"myservice"
+#pragma comment(lib, "Wtsapi32.lib")
+#pragma comment(lib, "Advapi32.lib")
+#pragma comment(lib, "Userenv.lib")
 
 SERVICE_STATUS g_ServiceStatus = {}; 
 SERVICE_STATUS_HANDLE g_StatusHandle = nullptr; 
-CStringW g_PathLog = _T("D:\\test.log");
+CStringW g_PathLog = L"D:\\test.log";
 HANDLE g_ServiceStopEvent = INVALID_HANDLE_VALUE;
 HANDLE g_WorkerThread = nullptr; 
+HANDLE g_hPipe = nullptr;
 void WINAPI ServiceHandle(DWORD ctrl)
 {
     switch (ctrl)
@@ -28,50 +36,148 @@ void WINAPI ServiceHandle(DWORD ctrl)
         break;
     }
 }
-void WriteLog(const char* message)
+BOOL WriteLog(CString msg)
 {
-    CString logPath = g_PathLog;
-    HANDLE hFile = CreateFileW(
-        logPath,
-        FILE_APPEND_DATA,           // Ghi nối tiếp cuối file
-        FILE_SHARE_READ,            // Cho phép đọc đồng thời
-        NULL,
-        OPEN_ALWAYS,                // Tạo nếu chưa có
-        FILE_ATTRIBUTE_NORMAL,
-        NULL
-    );
+    HANDLE hFile = CreateFile(g_PathLog, FILE_APPEND_DATA, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 
-    if (hFile == INVALID_HANDLE_VALUE) {
-        OutputDebugString(_T("Cannot open log file.\n"));
-        return;
+    if (hFile == INVALID_HANDLE_VALUE)
+    {
+        return FALSE;
     }
-
-    // Di chuyển con trỏ file tới cuối (chắc chắn nối tiếp)
-    SetFilePointer(hFile, 0, NULL, FILE_END);
-
-    // Format thời gian
-    time_t now = time(NULL);
-    struct tm t;
-    localtime_s(&t, &now);
-
-    char buffer[1024] = {};
-    snprintf(buffer, sizeof(buffer),
-        "[%02d-%02d-%04d %02d:%02d:%02d] %s\r\n",
-        t.tm_mday, t.tm_mon + 1, t.tm_year + 1900,
-        t.tm_hour, t.tm_min, t.tm_sec, message);
-
-    DWORD bytesWritten = 0;
-    WriteFile(hFile, buffer, (DWORD)strlen(buffer), &bytesWritten, NULL);
+    DWORD byteWritten = 0;
+    WriteFile(hFile, msg.GetBuffer(), msg.GetLength() * sizeof(wchar_t), &byteWritten, NULL);
 
     CloseHandle(hFile);
+    return TRUE;
+
+
+
+
+}
+BOOL RunAppAsCurrentUser(LPCWSTR appPath)
+{
+    // Logic thực hiện 
+    // Lấy Token của người dùng hiện tại 
+    // Clone token của người dùng hiện tại, không sử dụng trực tiếp token đó
+    // Tạo  khối môi trường cho token vừa clone được 
+    // Tạo tiến trình mới như user mở nó 
+    DWORD sessionId = WTSGetActiveConsoleSessionId(); 
+    // WTSGetActiveConsoleSessionId(), lấy id hiện tại của người dùng 
+    HANDLE hUserToken = NULL;
+    if (!WTSQueryUserToken(sessionId, &hUserToken))
+    {
+        // WTSQueryUserToken(2 tham số sessionId, và lpHanlde để lấy kết quả trả về ) , truy vấn usertoken của 1 session ID 
+
+        WriteLog(L"WTSQueryUserToken failed\n");
+        return FALSE;
+    }
+    // Giúp xác định người dùng hiện tại, lấy userToken của người dùng hiện tại 
+
+    HANDLE hPrimaryToken = NULL;
+    if (!DuplicateTokenEx(hUserToken, TOKEN_ALL_ACCESS, NULL, SecurityImpersonation, TokenPrimary, &hPrimaryToken))
+    {
+        // DuplicateTokenEx, sao chép token vừa lấy được phía trên, không tương tác trực tiếp với token vừa lấy được
+        // Chỉ nên thực hiện trên token sao chép 
+        WriteLog(L"DuplicateTokenEx failed\n");
+        CloseHandle(hUserToken);
+        return FALSE;
+    }
+
+    // Lấy environment block
+    LPVOID lpEnv = NULL;
+    if (!CreateEnvironmentBlock(&lpEnv, hPrimaryToken, FALSE))
+    {
+        // Tạo khối môi trường cho token
+        WriteLog(L"CreateEnvironmentBlock failed\n");
+        lpEnv = NULL;
+    }
+
+    STARTUPINFO si = { sizeof(si) }; // Cấu trúc startupinfo, chứa các thông tin khởi động cho tiến trình mới
+    si.lpDesktop = (LPWSTR)L"winsta0\\default";
+    PROCESS_INFORMATION pi = {};
+
+    // Tạo buffer có thể modify cho command line
+    size_t pathLen = wcslen(appPath);
+    LPWSTR commandLine = new WCHAR[pathLen + 3]; // +3 cho quotes và null terminator
+    swprintf_s(commandLine, pathLen + 3, L"\"%s\"", appPath); // Bao bọc bằng quotes
+
+    BOOL result = CreateProcessAsUser( // Tạo tiến trình  mới giống như user đang mở 
+        hPrimaryToken,
+        appPath,                    // <<<< Application name (có thể NULL)
+        commandLine,               // <<<< Command line (phải có thể modify)
+        NULL,
+        NULL,
+        FALSE,
+        CREATE_UNICODE_ENVIRONMENT | CREATE_NEW_CONSOLE,
+        lpEnv, // truyền vào con trỏ khối môi trường 
+        NULL,
+        &si, // cấu trúc startupinfo
+        &pi
+    );
+
+    if (!result)
+    {
+        DWORD err = GetLastError();
+        CString msg;
+        msg.Format(L"CreateProcessAsUser failed. Error: %lu\n", err);
+        WriteLog(msg);
+    }
+    else
+    {
+        WriteLog(L"Process created successfully\n");
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+
+    // Cleanup
+    delete[] commandLine;
+    if (lpEnv)
+        DestroyEnvironmentBlock(lpEnv);
+    CloseHandle(hPrimaryToken);
+    CloseHandle(hUserToken);
+    return result;
+}
+
+
+BOOL SetBackground(CStringW path)
+{
+    RunAppAsCurrentUser(L"C:\\Windows\\System32\\notepad.exe");
+    return TRUE;
 }
 DWORD WINAPI WorkerThread(PVOID pParam)
 {
 
     while ((WaitForSingleObject(g_ServiceStopEvent, 0)) != WAIT_OBJECT_0)
     {
-        WriteLog("Log in: ");
-        Sleep(1000); 
+        // Tuong duong while(true)
+        
+        BOOL connected = ConnectNamedPipe(g_hPipe, NULL); 
+        if (connected)
+        {
+            // neu Ket noi thanh cong thi ::
+            wchar_t buffer[512]; 
+            DWORD byteRead = 0;
+            if (ReadFile(g_hPipe, buffer, sizeof(buffer), &byteRead, NULL))
+            {
+                // Neu nhu doc duoc 
+                buffer[byteRead / sizeof(wchar_t)] = L'\0';
+                CStringW msg = CStringW(buffer);
+                int splitPos = msg.Find(L"|");
+                CStringW header = msg.Left(splitPos);
+                CStringW body = msg.Mid(splitPos + 1);
+                CStringW res = L""; 
+                if (header == L"SEND_LOG")
+                    WriteLog(body) ? res = L"Ghi Log thanh cong" :  res = L"Ghi log that bai"; 
+                else 
+                {
+                    SetBackground(body) ? res= L"Thay doi hinh nen thanh cong" : res = L"Thay doi hinh nen that bai"; 
+                   
+                }
+                DWORD byteWri = 0;
+                WriteFile(g_hPipe, res.GetBuffer(), res.GetLength() * sizeof(wchar_t), &byteWri, NULL );
+            }
+            DisconnectNamedPipe(g_hPipe); 
+        }
     }
     return 0; 
 }
@@ -102,7 +208,33 @@ void WINAPI ServiceMain(DWORD argc, LPWSTR* argv) // Đọc argv để lấy lin
     g_ServiceStatus.dwCurrentState = SERVICE_RUNNING; 
     
     SetServiceStatus(g_StatusHandle, &g_ServiceStatus);
+    
+    // ===== Khoi tao NamedPipe
 
+    SECURITY_ATTRIBUTES sa = { 0 };
+    PSECURITY_DESCRIPTOR pSD = NULL;
+
+    // DACL cho phép mọi người truy cập: D:(A;OICI;GRGW;;;WD)
+    LPCWSTR szSD = L"D:(A;OICI;GRGW;;;WD)";
+
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(szSD, SDDL_REVISION_1, &pSD, NULL)) {
+        return;
+    }
+
+    sa.nLength = sizeof(sa);
+    sa.lpSecurityDescriptor = pSD;
+    sa.bInheritHandle = FALSE;
+    g_hPipe = CreateNamedPipeW(
+        L"\\\\.\\pipe\\aatest1pipe",
+        PIPE_ACCESS_DUPLEX, 
+        PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT ,
+        PIPE_UNLIMITED_INSTANCES, 
+        4096,
+        4096, 
+        0 ,
+         &sa 
+    );
+ 
     g_WorkerThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)WorkerThread, NULL, 0 , nullptr); 
 
     WaitForSingleObject(g_ServiceStopEvent, INFINITE); 
