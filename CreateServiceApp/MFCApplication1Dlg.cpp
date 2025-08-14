@@ -216,10 +216,9 @@ HRESULT CMFCApplication1Dlg::OnCreateButton(IHTMLElement* /*pElement*/)
 	spDoc3->getElementById(CComBSTR(L"inputFile"), &spElemBin); 
 
 	CComQIPtr<IHTMLInputTextElement> spInputBin = spElemBin; 
-	BSTR bstrValBin = NULL;
+	CComBSTR bstrValBin;
 	spInputBin->get_value(&bstrValBin); 
 	pathBin = CString(bstrValBin);
-	SysFreeString(bstrValBin); 
 
 	//---------------
 
@@ -236,6 +235,7 @@ HRESULT CMFCApplication1Dlg::OnCreateButton(IHTMLElement* /*pElement*/)
 	CStringW binPath;
 	binPath.Format(_T("/C sc create %s binPath= \"%s %sLogServiceBKAV.log\" start= auto && sc start %s"), name, pathBin, pathLog, name);
 
+	AfxMessageBox(binPath); 
 	ShellExecute(
 		NULL,
 		_T("runas"),
